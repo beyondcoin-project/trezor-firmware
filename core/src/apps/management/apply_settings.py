@@ -11,6 +11,16 @@ if False:
     from trezor.messages.ApplySettings import ApplySettings
 
 
+def humanize_time(milliseconds: int) -> str:
+    units = (("hour", 60 * 60 * 1000), ("minute", 60 * 1000), ("second", 1000))
+    for (u, divisor) in units:
+        if milliseconds >= divisor:
+            num = milliseconds // divisor
+            return "{} {}{}".format(num, u, "s" if num > 1 else "")
+
+    return "{} ms".format(milliseconds)
+
+
 async def apply_settings(ctx: wire.Context, msg: ApplySettings):
     if not storage.device.is_initialized():
         raise wire.NotInitialized("Device is not initialized")
@@ -44,9 +54,10 @@ async def apply_settings(ctx: wire.Context, msg: ApplySettings):
         await require_confirm_change_display_rotation(ctx, msg.display_rotation)
 
     if msg.auto_lock_delay_ms is not None:
-        msg.auto_lock_delay_ms = max(
-            msg.auto_lock_delay_ms, storage.device.AUTOLOCK_DELAY_MINIMUM
-        )
+        if msg.auto_lock_delay_ms < storage.device.AUTOLOCK_DELAY_MINIMUM:
+            raise wire.ProcessError("Auto-lock delay too short")
+        if msg.auto_lock_delay_ms > storage.device.AUTOLOCK_DELAY_MAXIMUM:
+            raise wire.ProcessError("Auto-lock delay too long")
         await require_confirm_change_autolock_delay(ctx, msg.auto_lock_delay_ms)
 
     storage.device.load_settings(
@@ -120,5 +131,5 @@ async def require_confirm_change_display_rotation(ctx, rotation):
 async def require_confirm_change_autolock_delay(ctx, delay_ms):
     text = Text("Auto-lock delay", ui.ICON_CONFIG, new_lines=False)
     text.normal("Do you really want to", "auto-lock your device", "after")
-    text.bold("{} seconds?".format(delay_ms // 1000))
+    text.bold("{}?".format(humanize_time(delay_ms)))
     await require_confirm(ctx, text, ButtonRequestType.ProtectCall)

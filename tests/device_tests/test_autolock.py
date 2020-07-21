@@ -19,6 +19,7 @@ import time
 import pytest
 
 from trezorlib import device, messages
+from trezorlib.exceptions import TrezorFailure
 
 from ..common import TEST_ADDRESS_N, get_test_address
 
@@ -70,7 +71,7 @@ def test_apply_minimal_auto_lock_delay(client):
     Verify that the delay is not below the minimal auto-lock delay (10 secs)
     otherwise the device may auto-lock before any user interaction.
     """
-    set_autolock_delay(client, 1 * 1000)
+    set_autolock_delay(client, 10 * 1000)
 
     time.sleep(0.1)  # sleep less than auto-lock delay
     with client:
@@ -90,6 +91,41 @@ def test_apply_minimal_auto_lock_delay(client):
         client.use_pin_sequence([PIN4])
         client.set_expected_responses([pin_request(client), messages.Address()])
         get_test_address(client)
+
+
+@pytest.mark.parametrize(
+    "seconds,expected_error",
+    [
+        (0, "delay too short"),
+        (1, "delay too short"),
+        (9, "delay too short"),
+        (10, None),
+        (3600, None),
+        (536870, None),
+        (536871, "delay too long"),
+        (2 ** 22, "delay too long"),
+    ],
+)
+def test_apply_auto_lock_delay_periods(client, seconds, expected_error):
+    if expected_error is None:
+        expected_response = [
+            messages.ButtonRequest(),
+            messages.Success(),
+            messages.Features(),
+        ]
+    else:
+        expected_response = [messages.Failure(code=messages.FailureType.ProcessError)]
+
+    with client:
+        client.use_pin_sequence([PIN4])
+        client.set_expected_responses([pin_request(client)] + expected_response)
+        delay = seconds * 1000
+
+        if expected_error is None:
+            device.apply_settings(client, auto_lock_delay_ms=delay)
+        else:
+            with pytest.raises(TrezorFailure, match=expected_error):
+                device.apply_settings(client, auto_lock_delay_ms=delay)
 
 
 @pytest.mark.skip_t1
